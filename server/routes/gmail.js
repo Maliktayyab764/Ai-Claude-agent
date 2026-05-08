@@ -1,20 +1,52 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import db from '../config/database.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function loadGoogleCredentials() {
+  let clientId = process.env.GMAIL_CLIENT_ID;
+  let clientSecret = process.env.GMAIL_CLIENT_SECRET;
+
+  if (clientId && clientSecret) return { clientId, clientSecret };
+
+  const credPaths = [
+    path.join(__dirname, '..', 'credentials', 'google_oauth.json'),
+    path.join(__dirname, '..', 'google_oauth.json'),
+  ];
+
+  for (const p of credPaths) {
+    if (fs.existsSync(p)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        const creds = raw.web || raw.installed || raw;
+        if (creds.client_id && creds.client_secret) {
+          return { clientId: creds.client_id, clientSecret: creds.client_secret };
+        }
+      } catch (_) { /* ignore parse errors */ }
+    }
+  }
+
+  return { clientId: null, clientSecret: null };
+}
 
 const router = Router();
 
 router.get('/connect/:userId', (req, res) => {
-  const clientId = process.env.GMAIL_CLIENT_ID;
+  const { clientId } = loadGoogleCredentials();
 
   if (!clientId) {
     return res.json({
       status: 'not_configured',
-      message: 'Gmail integration requires Google OAuth2 credentials. Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in your .env file.',
+      message: 'Gmail integration requires Google OAuth2 credentials. Place your google_oauth.json file in server/credentials/ or set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in your .env file.',
       setupInstructions: {
         step1: 'Go to https://console.cloud.google.com/apis/credentials',
         step2: 'Create a new OAuth 2.0 Client ID',
         step3: 'Set authorized redirect URI to http://localhost:5000/api/gmail/callback',
-        step4: 'Copy Client ID and Client Secret to your .env file',
+        step4: 'Download the JSON credentials and place in server/credentials/google_oauth.json',
         step5: 'Enable Gmail API in Google Cloud Console',
         note: 'This is completely free with a Google account'
       }
@@ -36,8 +68,7 @@ router.get('/callback', async (req, res) => {
   }
 
   try {
-    const clientId = process.env.GMAIL_CLIENT_ID;
-    const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+    const { clientId, clientSecret } = loadGoogleCredentials();
     const redirectUri = process.env.GMAIL_REDIRECT_URI || 'http://localhost:5000/api/gmail/callback';
 
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -76,7 +107,7 @@ router.get('/status/:userId', (req, res) => {
   res.json({
     connected: !!user.gmail_connected,
     email: user.email,
-    gmailConfigured: !!process.env.GMAIL_CLIENT_ID
+    gmailConfigured: !!loadGoogleCredentials().clientId
   });
 });
 
